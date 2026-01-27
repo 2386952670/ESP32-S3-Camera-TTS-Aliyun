@@ -1,0 +1,10 @@
+build/
+sdkconfig
+*.log
+.vscode/
+.cache/
+managed_components/
+dependencies.lock
+*.bin
+*.elf
+*.map
