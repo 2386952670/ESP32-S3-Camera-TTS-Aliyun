@@ -10,6 +10,8 @@
 
 #include "esp_crt_bundle.h"
 
+#include "my_private_key.h"
+
 // I2S 驱动头文件
 #include "driver/i2s_std.h"
 
@@ -57,10 +59,6 @@ short pcm_buffer[MINIMP3_MAX_SAMPLES_PER_FRAME]; // 解码后的临时存放区
 #define TTS_URL "https://nls-gateway-cn-shanghai.aliyuncs.com/stream/v1/tts"
 
 
-// ========== 阿里云 TTS 配置 ==========
-// 修改这两行，确保没有多余空格
-#define ALIYUN_TTS_APPKEY  "r14vtjJVuThxUIPK"
-#define ALIYUN_TTS_TOKEN   "6e00871619ff487f81dbfa3a9ad6d89b" 
 
 
 #define BOARD_BUTTON_GPIO 0
@@ -138,8 +136,8 @@ static void init_i2s_driver() {
     };
     // 修正报错：改为 i2s_channel_init_std_mode
     i2s_channel_init_std_mode(tx_chan, &std_cfg);
-    i2s_channel_enable(tx_chan);
-    ESP_LOGI(TAG, "✅ I2S 驱动初始化成功");
+    //i2s_channel_enable(tx_chan);
+    ESP_LOGI(TAG, "✅ I2S 驱动初始化成功，（初始化为禁用状态）");
 }
 
 // 进入 TTS 模式：画质降低，帧率让路
@@ -236,6 +234,9 @@ void aliyun_tts_task(void *pvParameters) {
     enter_tts_mode(); // 降低摄像头画质，腾出带宽给 HTTPS
     ESP_LOGI(TAG, ">>> 启动阿里云 TTS (终极兼容模式)");
 
+    // 每次开始播放前启用 I2S 通道
+    i2s_channel_enable(tx_chan);
+
     // 初始化解码器
     mp3dec_init(&mp3d);
     mp3_res_len = 0;
@@ -250,8 +251,9 @@ void aliyun_tts_task(void *pvParameters) {
     // 2. 构造 JSON
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "appkey", ALIYUN_TTS_APPKEY);
-    cJSON_AddStringToObject(root, "text", "项目移植成功，现在摄像头和语音可以共存了。");
-    cJSON_AddStringToObject(root, "voice", "zhiyuan"); // 改回你测试成功的发音人
+    cJSON_AddStringToObject(root, "text", "哈喽靓仔，可唔可以同你拍拖");
+    // cJSON_AddStringToObject(root, "voice", "zhiyuan"); // 改回你测试成功的发音人
+    cJSON_AddStringToObject(root, "voice", "jiajia"); // 改回你测试成功的发音人
     cJSON_AddStringToObject(root, "format", "mp3");
     cJSON_AddNumberToObject(root, "sample_rate", 16000);
     cJSON_AddNumberToObject(root, "volume", 50);
@@ -288,6 +290,21 @@ void aliyun_tts_task(void *pvParameters) {
     } else {
         ESP_LOGE(TAG, "<<< 请求失败: %s", esp_err_to_name(err));
     }
+
+    // 在 aliyun_tts_task 函数末尾添加：
+
+    // 1. 发送一段静音数据，把 I2S 硬件缓冲区里的残余“冲”出来
+    size_t written;
+    short *silence = calloc(1, 1024); // 全 0 数据
+    if (silence) {
+        for(int i=0; i<5; i++) { // 多写几次确保填满 DMA 缓冲
+            i2s_channel_write(tx_chan, silence, 1024, &written, portMAX_DELAY);
+        }
+        free(silence);
+    }
+
+    // 2. 暂停 I2S 通道（这是解决突突突响的关键）
+    i2s_channel_disable(tx_chan);
 
     esp_http_client_cleanup(client);
     free(json_body);

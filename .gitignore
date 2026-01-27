@@ -8,3 +8,4 @@ dependencies.lock
 *.bin
 *.elf
 *.map
+main/my_private_key.h
